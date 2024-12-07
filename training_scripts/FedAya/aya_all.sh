@@ -1,7 +1,7 @@
 max_steps=10
 num_rounds=200
 checkpoint_step=50
-batch_size=4
+batch_size=2
 gradient_accumulation_steps=4
 seq_length=1024
 num_clients=38
@@ -12,9 +12,9 @@ lr=2e-5
 
 local_data_dir=data/Fed-Aya/aya_38c_25k.json   # you may uncomment this line if your data is stored locally and include it in the python command
 dataset_name=FedAya
-dataset_sample=25k
-model_name_or_path="/GPFS/data/ruiye-1/models/6fdf2e60f86ff2481f2241aaee459f85b5b0bbb9"
-output_dir=./models/FedAya/
+dataset_sample=25000
+model_name_or_path="../Llama-2-7b-hf/"
+output_dir=./models/FedAya-Llama2/
 
 gpu=0
 fed_alg=fedavg
