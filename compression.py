@@ -7,6 +7,7 @@ from accelerate import init_empty_weights
 from accelerate.utils import set_module_tensor_to_device
 from huggingface_hub import snapshot_download
 import torch
+import torch_npu
 from torch import Tensor
 from torch.nn import functional as F
 import torch.nn as nn
@@ -202,7 +203,7 @@ def load_compress_model(model_path, device, torch_dtype, use_fast, revision="mai
             tmp_state_dict[name] = None
             tensor = None
             gc.collect()
-            torch.cuda.empty_cache()
+            torch_npu.npu.empty_cache()
             if device == "xpu":
                 torch.xpu.empty_cache()
             if device == "npu":

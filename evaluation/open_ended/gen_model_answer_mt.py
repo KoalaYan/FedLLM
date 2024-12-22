@@ -54,7 +54,7 @@ question_file = f"./data/mtbench/question.jsonl"
 answer_file = f"./data/mtbench/model_answer/{model_name}.jsonl"
 
 # ============= Load model and tokenizer =============
-model = AutoModelForCausalLM.from_pretrained(args.base_model_path, torch_dtype=torch.float16).to('cuda')    # float16 to run inference of 7B model on 3090 GPU
+model = AutoModelForCausalLM.from_pretrained(args.base_model_path, torch_dtype=torch.float16).to('npu')    # float16 to run inference of 7B model on 3090 GPU
 if args.lora_path:
     model = PeftModel.from_pretrained(model, args.lora_path, torch_dtype=torch.float16)
 tokenizer = AutoTokenizer.from_pretrained(args.base_model_path)
@@ -100,7 +100,7 @@ for question in tqdm(questions):
             # some models may error out when generating long outputs
             try:
                 output_ids = model.generate(
-                    input_ids=torch.as_tensor(input_ids).cuda(),
+                    input_ids=torch.as_tensor(input_ids).npu(),
                     do_sample=do_sample,
                     temperature=temperature,
                     max_new_tokens=args.max_new_token,

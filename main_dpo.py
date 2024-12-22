@@ -60,7 +60,7 @@ if script_args.load_in_8bit or script_args.load_in_4bit:
     model = prepare_model_for_kbit_training(
                 model, use_gradient_checkpointing=training_args.gradient_checkpointing
             )
-
+model.enable_input_require_grads()
 model = get_peft_model(model, peft_config)
 model.print_trainable_parameters()
 
