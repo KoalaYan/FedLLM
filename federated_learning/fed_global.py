@@ -13,7 +13,7 @@ def get_clients_this_round(fed_args, round):
             clients_this_round = sorted(random.sample(range(fed_args.num_clients), fed_args.sample_clients))
     return clients_this_round
 
-def global_aggregate(fed_args, script_args, global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, proxy_dict=None, opt_proxy_dict=None, auxiliary_info=None):
+def global_aggregate(fed_args, script_args, global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, proxy_dict=None, opt_proxy_dict=None, auxiliary_info=None, stacking=False, heter=False, local_ranks=None):
     sample_this_round = sum([sample_num_list[client] for client in clients_this_round])
     global_auxiliary = None
 
@@ -59,6 +59,52 @@ def global_aggregate(fed_args, script_args, global_dict, local_dict_list, sample
         for key in global_dict.keys():
             global_dict[key] = sum([(local_dict_list[client][key] + gaussian_noise(local_dict_list[client][key].shape, fed_args, script_args, local_dict_list[client][key].device)) * sample_num_list[client] / sample_this_round for client in clients_this_round])
     
+    elif fed_args.fed_alg == 'flora':
+        weights_array = torch.tensor([sample_num_list[client] / sample_this_round for client in clients_this_round]).to(torch.device('npu'))
+        for k, client_id in enumerate(clients_this_round):
+            single_weights = local_dict_list[client_id]
+            x = 0
+            if stacking:
+                if k == 0:
+                    weighted_single_weights = single_weights
+                    for key in weighted_single_weights.keys():
+                        if heter:
+                            x += 1
+                            if weighted_single_weights[key].shape[0] == local_ranks[client_id]:
+                                weighted_single_weights[key] = weighted_single_weights[key] * weights_array[k]
+                        else:
+                            if weighted_single_weights[key].shape[0] == local_ranks[client_id]:
+                                weighted_single_weights[key] = weighted_single_weights[key] * weights_array[k]
+                else:
+                    for key in weighted_single_weights.keys():
+                        if heter:
+                            x += 1
+                            if single_weights[key].shape[0] == local_ranks[client_id]:
+                                new = [weighted_single_weights[key], single_weights[key] * weights_array[k]]
+                                weighted_single_weights[key] = torch.cat(new, dim=0)
+                        else:
+                            if single_weights[key].shape[0] == local_ranks[client_id]:
+                                new = [weighted_single_weights[key], single_weights[key] * weights_array[k]]
+                                weighted_single_weights[key] = torch.cat(new, dim=0)
+
+                        if heter:
+                            if single_weights[key].shape[1] == local_ranks[client_id]:
+                                new = [weighted_single_weights[key], single_weights[key] * weights_array[k]]
+                                weighted_single_weights[key] = torch.cat(new, dim=1)
+                        else:
+                            if single_weights[key].shape[1] == local_ranks[client_id]:
+                                new = [weighted_single_weights[key], single_weights[key] * weights_array[k]]
+                                weighted_single_weights[key] = torch.cat(new, dim=1)
+            else:
+                if k == 0:
+                    weighted_single_weights = {key: single_weights[key] * weights_array[k] for key in single_weights.keys()}
+                else:
+                    weighted_single_weights = {key: weighted_single_weights[key] + single_weights[key] * weights_array[k] for key in single_weights.keys()}
+        
+        global_dict = weighted_single_weights
+
+
+
     else:   # Normal dataset-size-based aggregation 
         for key in global_dict.keys():
             global_dict[key] = sum([local_dict_list[client][key] * sample_num_list[client] / sample_this_round for client in clients_this_round])
