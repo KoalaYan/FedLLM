@@ -79,6 +79,7 @@ if script_args.use_peft:
         lora_alpha=script_args.peft_lora_alpha,
         lora_dropout=0.05,
         bias="none",
+        target_modules=["q_proj", "v_proj"],
         task_type="CAUSAL_LM",
     )
 else:

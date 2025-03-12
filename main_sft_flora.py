@@ -60,6 +60,7 @@ if stacking == False:
     config = LoraConfig(
         r=script_args.peft_lora_r,
         lora_alpha=script_args.peft_lora_alpha,
+        target_modules=lora_target_modules,
         lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM",
@@ -70,6 +71,7 @@ else:
     config = LoraConfig(
         r=script_args.peft_lora_r*fed_args.num_clients,
         lora_alpha=script_args.peft_lora_alpha*fed_args.num_clients,
+        target_modules=lora_target_modules,
         lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM",
@@ -144,6 +146,7 @@ for round in tqdm(range(fed_args.num_rounds)):
                 config = LoraConfig(
                     r=script_args.peft_lora_r,
                     lora_alpha=script_args.peft_lora_alpha,
+                    target_modules=lora_target_modules,
                     lora_dropout=0.05,
                     bias="none",
                     task_type="CAUSAL_LM",
@@ -156,6 +159,7 @@ for round in tqdm(range(fed_args.num_rounds)):
                 config = LoraConfig(
                     r=local_ranks[client],
                     lora_alpha=2*local_ranks[client],
+                    target_modules=lora_target_modules,
                     lora_dropout=0.05,
                     bias="none",
                     task_type="CAUSAL_LM",
@@ -166,6 +170,7 @@ for round in tqdm(range(fed_args.num_rounds)):
                 config = LoraConfig(
                     r=local_ranks[client],
                     lora_alpha=script_args.peft_lora_alpha,
+                    target_modules=lora_target_modules,
                     lora_dropout=0.05,
                     bias="none",
                     task_type="CAUSAL_LM",
@@ -211,6 +216,7 @@ for round in tqdm(range(fed_args.num_rounds)):
             )
 
         results = trainer.train()
+        print("========Training finished=========")
         training_loss[client].append(results.training_loss)
 
         # ===== Client transmits local information to server =====
