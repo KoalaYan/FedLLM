@@ -60,7 +60,7 @@ def global_aggregate(fed_args, script_args, global_dict, local_dict_list, sample
             global_dict[key] = sum([(local_dict_list[client][key] + gaussian_noise(local_dict_list[client][key].shape, fed_args, script_args, local_dict_list[client][key].device)) * sample_num_list[client] / sample_this_round for client in clients_this_round])
     
     elif fed_args.fed_alg == 'flora':
-        weights_array = torch.tensor([sample_num_list[client] / sample_this_round for client in clients_this_round]).to(torch.device('npu'))
+        weights_array = torch.tensor([sample_num_list[client] / sample_this_round for client in clients_this_round]).to(torch.device('cuda'))
         for k, client_id in enumerate(clients_this_round):
             single_weights = local_dict_list[client_id]
             x = 0

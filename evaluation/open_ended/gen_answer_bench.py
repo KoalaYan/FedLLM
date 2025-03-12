@@ -47,7 +47,7 @@ else:
 
 
 # ============= Generate responses =============
-device = 'npu'
+device = 'cuda'
 model = AutoModelForCausalLM.from_pretrained(args.base_model_path, torch_dtype=torch.float16).to(device)
 if args.lora_path is not None:
     model = PeftModel.from_pretrained(model, args.lora_path, torch_dtype=torch.float16).to(device)

@@ -14,12 +14,11 @@ local_data_dir=data/Fed-Aya/aya_38c_25k.json   # you may uncomment this line if 
 dataset_name=FedAya
 dataset_sample=25000
 model_name_or_path="../Llama-2-7b-hf/"
-output_dir=./models/FedAya-Llama2/
+output_dir=./models/FedAya/
 
-gpu=0
 fed_alg=fedavg
 
-CUDA_VISIBLE_DEVICES=$gpu python main_sft.py \
+CUDA_VISIBLE_DEVICES=0,1,2,3,7 python main_sft.py \
  --learning_rate $lr \
  --model_name_or_path $model_name_or_path \
  --dataset_name $dataset_name \
@@ -35,7 +34,6 @@ CUDA_VISIBLE_DEVICES=$gpu python main_sft.py \
  --peft_lora_r $lora_r \
  --peft_lora_alpha $lora_alpha \
  --use_peft \
- --load_in_8bit \
  --output_dir $output_dir \
  --template "alpaca" \
  --local_data_dir $local_data_dir \
