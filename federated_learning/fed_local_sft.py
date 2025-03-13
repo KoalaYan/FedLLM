@@ -78,6 +78,7 @@ def get_fed_local_sft_trainer(script_args, fed_args, model, tokenizer, training_
                 train_dataset=local_dataset,
                 formatting_func = formatting_prompts_func,
                 data_collator=data_collator,
+                callbacks=[TrainingStepFlagCallback()]
             )
         else:
             raise ValueError(f'Unsupported `fed_alg`: {fed_args.fed_alg}')
@@ -146,14 +147,48 @@ class SCAFFOLD_Callback(TrainerCallback):
         set_peft_model_state_dict(self.model, model_para)
 
 class FIMSFTTrainer(SFTTrainer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fim_trace = 0
+
+    def is_training_step_active(self):
+        for callback in self.callback_handler.callbacks:
+            if isinstance(callback, TrainingStepFlagCallback):
+                return callback.is_training_step
+        return False  # 默认返回 False
+
     def training_step(self, model, inputs):
         loss = super(FIMSFTTrainer, self).training_step(model, inputs)
         
-        if self.state.global_step % 2 == 0:
+        if self.state.max_steps-1 == self.state.global_step and self.is_training_step_active():
+        # if self.state.max_steps-1 == self.state.global_step:
+        # if self.state.global_step % 2 == 0:
             fim_trace = 0
             for n, p in model.named_parameters():
                 if p.requires_grad:
                     fim_trace += (p.grad**2).sum().item()
-            print(f"Step {self.state.global_step}: Trace(FIM) = {fim_trace:.4f}")
+            print(f"Step {self.state.global_step+1}/{self.state.max_steps}: Trace(FIM) = {fim_trace:.4f}")
+            self.fim_trace = fim_trace
 
         return loss
+    
+class TrainingStepFlagCallback(TrainerCallback):
+    """
+    A callback that sets a flag before and after each training step.
+    """
+    def __init__(self):
+        self.is_training_step = False  # 直接持有 trainer 实例
+
+    def on_step_begin(self, args, state, control, **kwargs):
+        """
+        Called at the beginning of each training step.
+        Sets the training flag to True.
+        """
+        self.is_training_step = True
+
+    def on_step_end(self, args, state, control, **kwargs):
+        """
+        Called at the end of each training step.
+        Resets the training flag to False.
+        """
+        self.is_training_step = False

@@ -11,12 +11,21 @@ from utils import *
 from federated_learning import *
 from config import get_config, save_config, get_model_config, get_training_args
 import torch
+import logging
 
 # ===== Define the arguments =====
 script_args, fed_args, peft_config = get_config()
 training_args = get_training_args(script_args, script_args.learning_rate,script_args.max_steps)
 save_config(script_args, fed_args)
 print(script_args, fed_args)
+logging.basicConfig(
+    filename=os.path.join(script_args.output_dir, 'fed_local_sft.log'),
+    filemode='a',
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.DEBUG
+)
+logger = logging.getLogger(__name__)
+logger.debug("Test")
 
 # ===== Load the dataset =====
 if fed_args.fed_alg.startswith('local'):
@@ -26,11 +35,17 @@ else:
 
 
 # ===== FLoRA parameters =====
-stacking = True
-heter = False # False
+if fed_args.fed_alg == 'flora':
+    stacking = True
+    heter = False # False
+else:
+    stacking = False
+    heter = False
 local_ranks = [8] * fed_args.num_clients # [64, 32, 16, 16, 8, 8, 4, 4, 4, 4]
+# rank_4_clients = [7,19,27,30]
+# rank_8_clients = [8,17,24,29]
+# local_ranks = [4 if i in rank_4_clients else 8 if i in rank_8_clients else 2 for i in range(fed_args.num_clients)]
 lora_target_modules = ["q_proj", "v_proj"]
-
 
 # ===== Split the dataset into clients =====
 print("===== Split the dataset into clients =====")
@@ -128,6 +143,7 @@ for round in tqdm(range(fed_args.num_rounds)):
             training_loss[client].append(-1)            # -1 is an indicator of not training
             continue
 
+        print(f"========Client {client} Training Started=========")
         # set_peft_model_state_dict(model, global_dict)   # sync the global model to the local model
         if stacking:
             if heter:
@@ -218,6 +234,7 @@ for round in tqdm(range(fed_args.num_rounds)):
         results = trainer.train()
         print("========Training finished=========")
         training_loss[client].append(results.training_loss)
+        logger.debug(f"Round: {round}, Client: {client}, FIM Trace: {trainer.fim_trace}")
 
         # ===== Client transmits local information to server =====
         if fed_args.fed_alg == 'scaffold':
@@ -233,13 +250,18 @@ for round in tqdm(range(fed_args.num_rounds)):
         stacking=stacking, heter=heter, local_ranks=local_ranks
     )
     global_model.load_state_dict(global_dict, strict=False)
-    if stacking:
-        model = global_model.merge_and_unload()
+    # if stacking:
+    model = copy.deepcopy(global_model)
+    model.merge_and_unload()
         
     # set_peft_model_state_dict(model, global_dict)   # Update global model
 
     # ===== Save the model =====
     if (round+1) % fed_args.checkpoint_step == 0:
-        trainer.save_model(os.path.join(script_args.output_dir, f"checkpoint-{round+1}"))
+        model.save_pretrained(os.path.join(script_args.output_dir, f"checkpoint-{round+1}"))
+        # if stacking:
+        #     model.save_pretrained(os.path.join(script_args.output_dir, f"checkpoint-{round+1}"))
+        # else:
+        #     trainer.save_model(os.path.join(script_args.output_dir, f"checkpoint-{round+1}"))
     
     np.save(os.path.join(script_args.output_dir, "training_loss.npy"), np.array(training_loss))
