@@ -60,7 +60,7 @@ def global_aggregate(fed_args, script_args, global_dict, local_dict_list, sample
             global_dict[key] = sum([(local_dict_list[client][key] + gaussian_noise(local_dict_list[client][key].shape, fed_args, script_args, local_dict_list[client][key].device)) * sample_num_list[client] / sample_this_round for client in clients_this_round])
     
     elif fed_args.fed_alg == 'flora':
-        weights_array = torch.tensor([sample_num_list[client] / sample_this_round for client in clients_this_round]).to(torch.device('cuda'))
+        weights_array = torch.tensor([sample_num_list[client] / sample_this_round for client in clients_this_round])#.to(torch.device('cuda'))
         for k, client_id in enumerate(clients_this_round):
             single_weights = local_dict_list[client_id]
             x = 0
@@ -68,38 +68,40 @@ def global_aggregate(fed_args, script_args, global_dict, local_dict_list, sample
                 if k == 0:
                     weighted_single_weights = single_weights
                     for key in weighted_single_weights.keys():
+                        device = weighted_single_weights[key].device
                         if heter:
                             x += 1
                             if weighted_single_weights[key].shape[0] == local_ranks[client_id]:
-                                weighted_single_weights[key] = weighted_single_weights[key] * weights_array[k]
+                                weighted_single_weights[key] = weighted_single_weights[key] * weights_array[k].to(device)
                         else:
                             if weighted_single_weights[key].shape[0] == local_ranks[client_id]:
-                                weighted_single_weights[key] = weighted_single_weights[key] * weights_array[k]
+                                weighted_single_weights[key] = weighted_single_weights[key] * weights_array[k].to(device)
                 else:
                     for key in weighted_single_weights.keys():
+                        device = single_weights[key].device
                         if heter:
                             x += 1
                             if single_weights[key].shape[0] == local_ranks[client_id]:
-                                new = [weighted_single_weights[key], single_weights[key] * weights_array[k]]
+                                new = [weighted_single_weights[key], single_weights[key] * weights_array[k].to(device)]
                                 weighted_single_weights[key] = torch.cat(new, dim=0)
                         else:
                             if single_weights[key].shape[0] == local_ranks[client_id]:
-                                new = [weighted_single_weights[key], single_weights[key] * weights_array[k]]
+                                new = [weighted_single_weights[key], single_weights[key] * weights_array[k].to(device)]
                                 weighted_single_weights[key] = torch.cat(new, dim=0)
 
                         if heter:
                             if single_weights[key].shape[1] == local_ranks[client_id]:
-                                new = [weighted_single_weights[key], single_weights[key] * weights_array[k]]
+                                new = [weighted_single_weights[key], single_weights[key] * weights_array[k].to(device)]
                                 weighted_single_weights[key] = torch.cat(new, dim=1)
                         else:
                             if single_weights[key].shape[1] == local_ranks[client_id]:
-                                new = [weighted_single_weights[key], single_weights[key] * weights_array[k]]
+                                new = [weighted_single_weights[key], single_weights[key] * weights_array[k].to(device)]
                                 weighted_single_weights[key] = torch.cat(new, dim=1)
             else:
                 if k == 0:
-                    weighted_single_weights = {key: single_weights[key] * weights_array[k] for key in single_weights.keys()}
+                    weighted_single_weights = {key: single_weights[key] * weights_array[k].to(single_weights[key].device) for key in single_weights.keys()}
                 else:
-                    weighted_single_weights = {key: weighted_single_weights[key] + single_weights[key] * weights_array[k] for key in single_weights.keys()}
+                    weighted_single_weights = {key: weighted_single_weights[key] + single_weights[key] * weights_array[k].to(single_weights[key].device) for key in single_weights.keys()}
         
         global_dict = weighted_single_weights
 
