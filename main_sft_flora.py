@@ -38,17 +38,17 @@ else:
 # ===== FLoRA parameters =====
 if fed_args.fed_alg == 'flora':
     stacking = True
-    heter = True # False
+    heter = True # False True
 else:
     stacking = False
     heter = False
 
 if heter:
-    rank_4_clients = [7,17,19,29,30,31]
-    rank_8_clients = [8,24,27]
-    local_ranks = [4 if i in rank_4_clients else 8 if i in rank_8_clients else 2 for i in range(fed_args.num_clients)]
+    rank_8_clients = [7,17,19,29,30,31]
+    rank_16_clients = [8,24,27]
+    local_ranks = [8 if i in rank_8_clients else 16 if i in rank_16_clients else 4 for i in range(fed_args.num_clients)]
 else:
-    local_ranks = [8] * fed_args.num_clients
+    local_ranks = [script_args.peft_lora_r] * fed_args.num_clients
 
 # local_ranks = [8] * fed_args.num_clients # [64, 32, 16, 16, 8, 8, 4, 4, 4, 4]
 lora_target_modules = ["q_proj", "v_proj"]
@@ -72,7 +72,7 @@ model = AutoModelForCausalLM.from_pretrained(
     torch_dtype=torch_dtype,
 )
 
-max_memory = {i: "8000MB" for i in range(8)}
+max_memory = {i: "12000MB" for i in range(8)}
 device_map = infer_auto_device_map(model, max_memory=max_memory, no_split_module_classes=["LlamaDecoderLayer"])
 model = dispatch_model(model, device_map=device_map)
 if script_args.load_in_8bit or script_args.load_in_4bit:
