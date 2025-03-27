@@ -9,12 +9,15 @@ from peft import get_peft_model, get_peft_model_state_dict, set_peft_model_state
 from utils import *
 from federated_learning import *
 from config import get_config, save_config, get_model_config, get_training_args
+import torch
 import torch_npu
 import logging
 from time import sleep
 
 # ===== Define the arguments =====
 script_args, fed_args, peft_config = get_config()
+if torch_npu.npu.is_available():
+    torch_npu.npu.set_device("npu")
 training_args = get_training_args(script_args, script_args.learning_rate,script_args.max_steps)
 save_config(script_args, fed_args)
 print(script_args, fed_args)
@@ -69,7 +72,7 @@ model = AutoModelForCausalLM.from_pretrained(
     device_map=device_map,
     trust_remote_code=script_args.trust_remote_code,
     torch_dtype=torch_dtype,
-)
+).npu()
 
 if script_args.load_in_8bit or script_args.load_in_4bit:
     model = prepare_model_for_kbit_training(
@@ -86,7 +89,7 @@ if stacking == False:
         task_type="CAUSAL_LM",
         base_model_name_or_path=script_args.model_name_or_path,
     )
-    global_model = get_peft_model(model, config)
+    global_model = get_peft_model(model, config).npu()
     global_dict = copy.deepcopy(get_peft_model_state_dict(global_model))
     proxy_dict, opt_proxy_dict = get_proxy_dict(fed_args, global_dict)
     global_auxiliary, auxiliary_model_list, auxiliary_delta_dict = get_auxiliary_dict(fed_args, global_dict)
@@ -94,7 +97,7 @@ else:
     global_dict = None
     proxy_dict, opt_proxy_dict = None, None
     global_auxiliary, auxiliary_model_list, auxiliary_delta_dict = None, [None] * fed_args.num_clients, None
-    
+
 ddp = False
 if not ddp and torch_npu.npu.device_count() > 1:
     model.is_parallelizable = True
@@ -117,6 +120,7 @@ else:
 # ===== Define the formatting function (cater to TRL SFTTrainer)=====
 formatting_prompts_func, response_template = get_formatting_prompts_func(script_args.template, tokenizer.eos_token, script_args)
 response_template_ids = tokenizer.encode(response_template, add_special_tokens=False)[2:]   # Now we have it like in the dataset texts: `[2277, 29937, 4007, 22137, 29901]` for Llama2
+
 data_collator = DataCollatorForCompletionOnlyLM(response_template_ids, tokenizer=tokenizer)
 
 if script_args.multi_turn_task:
@@ -124,7 +128,7 @@ if script_args.multi_turn_task:
     print("multi-turn")
     print(len(sample_num_list))
     print(sample_num_list)
-   
+
 # ===== Start federated training =====
 training_loss = [[] for i in range(fed_args.num_clients)]
 for round in tqdm(range(fed_args.num_rounds)):
@@ -152,7 +156,7 @@ for round in tqdm(range(fed_args.num_rounds)):
             )
             if isinstance(model, PeftModel):
                 model = model.base_model
-            model_client = get_peft_model(model, config)
+            model_client = get_peft_model(model, config).npu()
         else:
             set_peft_model_state_dict(global_model, global_dict)
             model_client = global_model
@@ -180,7 +184,7 @@ for round in tqdm(range(fed_args.num_rounds)):
             )
         else:
             trainer = get_fed_local_sft_trainer(
-                model=model_client,
+                model=model_client.to('npu'),
                 tokenizer=tokenizer,
                 training_args=training_args,
                 local_dataset=sub_dataset,
@@ -215,7 +219,7 @@ for round in tqdm(range(fed_args.num_rounds)):
             task_type="CAUSAL_LM",
             base_model_name_or_path=script_args.model_name_or_path,
         )
-        global_model = get_peft_model(model, config)
+        global_model = get_peft_model(model, config).npu()
         global_dict = copy.deepcopy(get_peft_model_state_dict(global_model))
         proxy_dict, opt_proxy_dict = get_proxy_dict(fed_args, global_dict)
         global_auxiliary, auxiliary_model_list, auxiliary_delta_dict = get_auxiliary_dict(fed_args, global_dict)
@@ -233,7 +237,7 @@ for round in tqdm(range(fed_args.num_rounds)):
     else:
         model = copy.deepcopy(global_model)
         model = model.merge_and_unload().base_model
-        
+
 
     # ===== Save the model =====
     if (round+1) % fed_args.checkpoint_step == 0:
@@ -244,5 +248,5 @@ for round in tqdm(range(fed_args.num_rounds)):
         #     model.save_pretrained(os.path.join(script_args.output_dir, f"checkpoint-{round+1}"))
         # else:
         #     trainer.save_model(os.path.join(script_args.output_dir, f"checkpoint-{round+1}"))
-    
+
     np.save(os.path.join(script_args.output_dir, "training_loss.npy"), np.array(training_loss))

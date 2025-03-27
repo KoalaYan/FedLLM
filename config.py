@@ -119,7 +119,7 @@ def get_model_config(script_args):
         device_map = {"": Accelerator().local_process_index}
         torch_dtype = torch.bfloat16
     else:
-        device_map = "auto"
+        device_map = None
         quantization_config = None
         torch_dtype = None
     return device_map, quantization_config, torch_dtype
