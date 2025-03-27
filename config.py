@@ -77,6 +77,7 @@ if script_args.use_peft:
     peft_config = LoraConfig(
         r=script_args.peft_lora_r,
         lora_alpha=script_args.peft_lora_alpha,
+        target_modules=["q_proj", "v_proj"],
         lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM",
@@ -118,7 +119,7 @@ def get_model_config(script_args):
         device_map = {"": Accelerator().local_process_index}
         torch_dtype = torch.bfloat16
     else:
-        device_map = None
+        device_map = "auto"
         quantization_config = None
         torch_dtype = None
     return device_map, quantization_config, torch_dtype

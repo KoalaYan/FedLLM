@@ -5,18 +5,27 @@ import numpy as np
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from trl import DataCollatorForCompletionOnlyLM
-from peft import get_peft_model, get_peft_model_state_dict, set_peft_model_state_dict, prepare_model_for_kbit_training, LoraConfig
-
+from peft import get_peft_model, get_peft_model_state_dict, set_peft_model_state_dict, prepare_model_for_kbit_training, LoraConfig, PeftModel
 from utils import *
 from federated_learning import *
 from config import get_config, save_config, get_model_config, get_training_args
 import torch_npu
+import logging
+from time import sleep
 
 # ===== Define the arguments =====
 script_args, fed_args, peft_config = get_config()
 training_args = get_training_args(script_args, script_args.learning_rate,script_args.max_steps)
 save_config(script_args, fed_args)
 print(script_args, fed_args)
+logging.basicConfig(
+    filename=os.path.join(script_args.output_dir, 'fed_local_sft.log'),
+    filemode='a',
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.DEBUG
+)
+logger = logging.getLogger(__name__)
+logger.debug("Test")
 
 # ===== Load the dataset =====
 if fed_args.fed_alg.startswith('local'):
@@ -26,19 +35,32 @@ else:
 
 
 # ===== FLoRA parameters =====
-stacking = True
-heter = False # False
-local_ranks = [8] * fed_args.num_clients # [64, 32, 16, 16, 8, 8, 4, 4, 4, 4]
+if fed_args.fed_alg == 'flora':
+    stacking = True
+    heter = True # False True
+else:
+    stacking = False
+    heter = False
+
+if heter:
+    rank_8_clients = [7,17,19,29,30,31]
+    rank_16_clients = [8,24,27]
+    local_ranks = [8 if i in rank_8_clients else 16 if i in rank_16_clients else 4 for i in range(fed_args.num_clients)]
+else:
+    local_ranks = [script_args.peft_lora_r] * fed_args.num_clients
+
+# local_ranks = [8] * fed_args.num_clients # [64, 32, 16, 16, 8, 8, 4, 4, 4, 4]
 lora_target_modules = ["q_proj", "v_proj"]
 
-
 # ===== Split the dataset into clients =====
+print("===== Split the dataset into clients =====")
 local_datasets = dataset[:fed_args.num_clients]
 sample_num_list = [len(local_datasets[i]) for i in range(fed_args.num_clients)]
 print(sample_num_list)
 print(len(sample_num_list))
 
 # ===== Get model config =====
+print("===== Get model config =====")
 device_map, quantization_config, torch_dtype = get_model_config(script_args)
 
 model = AutoModelForCausalLM.from_pretrained(
@@ -58,35 +80,32 @@ if stacking == False:
     config = LoraConfig(
         r=script_args.peft_lora_r,
         lora_alpha=script_args.peft_lora_alpha,
+        target_modules=lora_target_modules,
         lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM",
         base_model_name_or_path=script_args.model_name_or_path,
     )
-    global_model = get_peft_model(model, peft_config)
+    global_model = get_peft_model(model, config)
+    global_dict = copy.deepcopy(get_peft_model_state_dict(global_model))
+    proxy_dict, opt_proxy_dict = get_proxy_dict(fed_args, global_dict)
+    global_auxiliary, auxiliary_model_list, auxiliary_delta_dict = get_auxiliary_dict(fed_args, global_dict)
 else:
-    config = LoraConfig(
-        r=script_args.peft_lora_r*fed_args.num_clients,
-        lora_alpha=script_args.peft_lora_alpha*fed_args.num_clients,
-        lora_dropout=0.05,
-        bias="none",
-        task_type="CAUSAL_LM",
-        base_model_name_or_path=script_args.model_name_or_path,
-    )
-    global_model = get_peft_model(model, peft_config)
-
+    global_dict = None
+    proxy_dict, opt_proxy_dict = None, None
+    global_auxiliary, auxiliary_model_list, auxiliary_delta_dict = None, [None] * fed_args.num_clients, None
+    
 ddp = False
 if not ddp and torch_npu.npu.device_count() > 1:
     model.is_parallelizable = True
     model.model_parallel = True
 
 # ===== Define the global and local models =====
-global_dict = copy.deepcopy(get_peft_model_state_dict(global_model))
+print("===== Define the global and local models =====")
 local_dict_list = [None for i in range(fed_args.num_clients)]
-proxy_dict, opt_proxy_dict = get_proxy_dict(fed_args, global_dict)
-global_auxiliary, auxiliary_model_list, auxiliary_delta_dict = get_auxiliary_dict(fed_args, global_dict)
 
 # ===== Define the tokenizer =====
+print("===== Define the tokenizer =====")
 tokenizer = AutoTokenizer.from_pretrained(script_args.model_name_or_path, use_fast=False, padding_side="right", model_max_length=script_args.seq_length)
 if script_args.multi_turn_task:
     tokenizer.pad_token = tokenizer.unk_token   # following vicuna
@@ -108,67 +127,35 @@ if script_args.multi_turn_task:
    
 # ===== Start federated training =====
 training_loss = [[] for i in range(fed_args.num_clients)]
-
-
 for round in tqdm(range(fed_args.num_rounds)):
 
     clients_this_round = get_clients_this_round(fed_args, round)
 
     print(f">> ==================== Round {round+1} : {clients_this_round} ====================")
-    
+
     for client in range(fed_args.num_clients):
 
         if client not in clients_this_round:
             training_loss[client].append(-1)            # -1 is an indicator of not training
             continue
 
-        # set_peft_model_state_dict(model, global_dict)   # sync the global model to the local model
+        print(f"========Client {client} Training Started=========")
         if stacking:
-            if heter:
-                config = LoraConfig(
-                    r=local_ranks[client],
-                    lora_alpha=2*local_ranks[client],
-                    target_modules=lora_target_modules,
-                    lora_dropout=0.05,
-                    bias="none",
-                    task_type="CAUSAL_LM",
-                    base_model_name_or_path=script_args.model_name_or_path,
-                )
-                model_client = copy.deepcopy(model)
-                model_client = get_peft_model(model_client, config)
-            else:
-                config = LoraConfig(
-                    r=script_args.peft_lora_r,
-                    lora_alpha=script_args.peft_lora_alpha,
-                    lora_dropout=0.05,
-                    bias="none",
-                    task_type="CAUSAL_LM",
-                    base_model_name_or_path=script_args.model_name_or_path,
-                )
-                model_client = copy.deepcopy(model)
-                model_client = get_peft_model(model_client, config)
+            config = LoraConfig(
+                r=local_ranks[client],
+                lora_alpha=2*local_ranks[client],
+                target_modules=lora_target_modules,
+                lora_dropout=0.05,
+                bias="none",
+                task_type="CAUSAL_LM",
+                base_model_name_or_path=script_args.model_name_or_path,
+            )
+            if isinstance(model, PeftModel):
+                model = model.base_model
+            model_client = get_peft_model(model, config)
         else:
-            if heter:
-                config = LoraConfig(
-                    r=local_ranks[client],
-                    lora_alpha=2*local_ranks[client],
-                    lora_dropout=0.05,
-                    bias="none",
-                    task_type="CAUSAL_LM",
-                    base_model_name_or_path=script_args.model_name_or_path,
-                )
-                model_client = copy.deepcopy(global_model)
-            else:
-                config = LoraConfig(
-                    r=local_ranks[client],
-                    lora_alpha=script_args.peft_lora_alpha,
-                    lora_dropout=0.05,
-                    bias="none",
-                    task_type="CAUSAL_LM",
-                    base_model_name_or_path=script_args.model_name_or_path,
-                )
-                model_client = copy.deepcopy(global_model)
-
+            set_peft_model_state_dict(global_model, global_dict)
+            model_client = global_model
 
         sub_dataset = get_dataset_this_round(local_datasets[client], round, fed_args, script_args)      # get the required sub-dataset for this round
         new_lr = cosine_learning_rate(round, fed_args.num_rounds, script_args.learning_rate, 1e-6)      # manually schedule the learning rate
@@ -207,13 +194,31 @@ for round in tqdm(range(fed_args.num_rounds)):
             )
 
         results = trainer.train()
+        print("========Training finished=========")
         training_loss[client].append(results.training_loss)
+        logger.debug(f"Round: {round}, Client: {client}, FIM Trace: {trainer.fim_trace}")
 
         # ===== Client transmits local information to server =====
         if fed_args.fed_alg == 'scaffold':
             auxiliary_model_list[client], auxiliary_delta_dict[client] = trainer.get_auxiliary_param()
 
         local_dict_list[client] = copy.deepcopy(get_peft_model_state_dict(model_client))   # copy is needed!
+        del model_client
+
+    if stacking == True:
+        config = LoraConfig(
+            r=sum([local_ranks[i] for i in clients_this_round]),
+            lora_alpha=script_args.peft_lora_alpha*fed_args.num_clients,
+            target_modules=lora_target_modules,
+            lora_dropout=0.05,
+            bias="none",
+            task_type="CAUSAL_LM",
+            base_model_name_or_path=script_args.model_name_or_path,
+        )
+        global_model = get_peft_model(model, config)
+        global_dict = copy.deepcopy(get_peft_model_state_dict(global_model))
+        proxy_dict, opt_proxy_dict = get_proxy_dict(fed_args, global_dict)
+        global_auxiliary, auxiliary_model_list, auxiliary_delta_dict = get_auxiliary_dict(fed_args, global_dict)
 
     # ===== Server aggregates the local models =====
     global_dict, global_auxiliary = global_aggregate(
@@ -222,14 +227,22 @@ for round in tqdm(range(fed_args.num_rounds)):
         opt_proxy_dict=opt_proxy_dict, auxiliary_info=(global_auxiliary, auxiliary_delta_dict), \
         stacking=stacking, heter=heter, local_ranks=local_ranks
     )
-    global_model.load_state_dict(global_dict, strict=False)
+    set_peft_model_state_dict(global_model, global_dict)
     if stacking:
         model = global_model.merge_and_unload()
+    else:
+        model = copy.deepcopy(global_model)
+        model = model.merge_and_unload().base_model
         
-    # set_peft_model_state_dict(model, global_dict)   # Update global model
 
     # ===== Save the model =====
     if (round+1) % fed_args.checkpoint_step == 0:
-        trainer.save_model(os.path.join(script_args.output_dir, f"checkpoint-{round+1}"))
+        save_path = os.path.join(script_args.output_dir, f"checkpoint-{round+1}")
+        model.save_pretrained(save_path)
+        tokenizer.save_pretrained(save_path)
+        # if stacking:
+        #     model.save_pretrained(os.path.join(script_args.output_dir, f"checkpoint-{round+1}"))
+        # else:
+        #     trainer.save_model(os.path.join(script_args.output_dir, f"checkpoint-{round+1}"))
     
     np.save(os.path.join(script_args.output_dir, "training_loss.npy"), np.array(training_loss))
