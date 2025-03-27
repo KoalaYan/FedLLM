@@ -107,7 +107,7 @@ class SFTTrainerFedProx(SFTTrainer):
             if not param.requires_grad:
                 continue
             else:
-                loss ++= self.mu / 2 * torch.norm(param - self.global_state[name]) ** 2
+                loss += self.mu / 2 * torch.norm(param - self.global_state[name]) ** 2
 
         return (loss, outputs) if return_outputs else loss
 
